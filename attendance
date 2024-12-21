@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Attendance Sheet</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.5.29/jspdf.plugin.autotable.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 20px;
+            background-color: #f4f4f4;
+        }
+        .container {
+            max-width: 1000px;
+            margin: auto;
+            background: white;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            text-align: center;
+            color: #333;
+        }
+        form {
+            display: grid;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        @media (min-width: 768px) {
+            form {
+                grid-template-columns: repeat(3, 1fr);
+            }
+        }
+        input, button, select {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background-color: #5cb85c;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #4cae4c;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }
+        th {
+            background-color: #f2f2f2;
+            font-weight: bold;
+        }
+        .export-buttons {
+            margin-top: 20px;
+            text-align: right;
+        }
+        .export-buttons button {
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Attendance Sheet</h1>
+        <input type="date" id="attendanceDate" onchange="loadAttendanceEntries()">
+        <form id="attendanceForm">
+            <select id="attendanceName" required>
+                <option value="">Select Employee</option>
+            </select>
+            <button type="button" onclick="clockInOut()">Clock In/Out</button>
+        </form>
+        <table id="attendanceTable">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Date</th>
+                    <th>Time In</th>
+                    <th>Time Out</th>
+                    <th>Hours</th>
+                    <th>Status</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <div class="export-buttons">
+            <button onclick="exportToPDF()">Export to PDF</button>
+            <button onclick="exportToCSV()">Export to CSV</button>
+        </div>
+    </div>
+
+    <script>
+        let attendanceEntries = JSON.parse(localStorage.getItem('attendanceEntries')) || {};
+        let employees = [];
+
+        function addEmployee(name, id) {
+            if (!employees.some(e => e.id === id)) {
+                employees.push({ name, id });
+                saveEmployees();
+                populateEmployeeDropdown();
+            } else {
+                console.log('Employee with this ID already exists!');
+            }
+        }
+
+        function removeEmployee(id) {
+            employees = employees.filter(e => e.id !== id);
+            saveEmployees();
+            populateEmployeeDropdown();
+        }
+
+        function saveEmployees() {
+            localStorage.setItem('employees', JSON.stringify(employees));
+        }
+
+        function loadEmployees() {
+            const storedEmployees = localStorage.getItem('employees');
+            if (storedEmployees) {
+                employees = JSON.parse(storedEmployees);
+            }
+        }
+
+        function loadAttendanceEntries() {
+            const date = document.getElementById('attendanceDate').value;
+            renderAttendanceTable(date);
+        }
+
+        function renderAttendanceTable(date) {
+            const tableBody = document.querySelector('#attendanceTable tbody');
+            tableBody.innerHTML = '';
+            
+            if (attendanceEntries[date]) {
+                attendanceEntries[date].forEach(entry => {
+                    const row = tableBody.insertRow();
+                    row.innerHTML = `
+                        <td>${entry.name}</td>
+                        <td>${entry.date}</td>
+                        <td>${entry.timeIn || ''}</td>
+                        <td>${entry.timeOut || ''}</td>
+                        <td>${entry.hours !== null ? entry.hours.toFixed(2) : ''}</td>
+                        <td>${entry.timeOut ? 'Completed' : 'In Progress'}</td>
+                    `;
+                });
+            }
+        }
+
+        function populateEmployeeDropdown() {
+            const select = document.getElementById('attendanceName');
+            select.innerHTML = '<option value="">Select Employee</option>';
+            employees.forEach(employee => {
+                const option = document.createElement('option');
+                option.value = employee.id;
+                option.textContent = `${employee.name} (${employee.id})`;
+                select.appendChild(option);
+            });
+        }
+
+        function clockInOut() {
+            const now = new Date();
+            const offset = now.getTimezoneOffset();
+            const localDate = new Date(now.getTime() - (offset*60*1000));
+            const date = localDate.toISOString().split('T')[0]; // Get current date in YYYY-MM-DD format
+            const time = now.toTimeString().split(' ')[0]; // Get current time in HH:MM:SS format
+            const employeeId = document.getElementById('attendanceName').value;
+            
+            if (!employeeId) {
+                alert('Please select an employee');
+                return;
+            }
+            
+            const employee = employees.find(e => e.id === employeeId);
+            if (!employee) {
+                alert('Employee not found');
+                return;
+            }
+            
+            if (!attendanceEntries[date]) {
+                attendanceEntries[date] = [];
+            }
+            
+            const existingEntry = attendanceEntries[date].find(entry => entry.employeeId === employeeId && !entry.timeOut);
+            
+            if (existingEntry) {
+                // Clock out
+                existingEntry.timeOut = time;
+                const start = new Date(`${date}T${existingEntry.timeIn}`);
+                const end = new Date(`${date}T${existingEntry.timeOut}`);
+                let hours = (end - start) / 3600000; // Convert milliseconds to hours
+                
+                // Adjust for overnight shifts
+                if (hours < 0) {
+                    hours += 24;
+                }
+                
+                // Round to 2 decimal places
+                existingEntry.hours = Math.round(hours * 100) / 100;
+            } else {
+                // Clock in
+                const newEntry = {
+                    id: Date.now().toString(),
+                    employeeId: employeeId,
+                    name: employee.name,
+                    date,
+                    timeIn: time,
+                    timeOut: null,
+                    hours: null
+                };
+                attendanceEntries[date].push(newEntry);
+            }
+            
+            localStorage.setItem('attendanceEntries', JSON.stringify(attendanceEntries));
+            document.getElementById('attendanceDate').value = date;
+            renderAttendanceTable(date);
+        }
+
+        function exportToPDF() {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF();
+            
+            const date = document.getElementById('attendanceDate').value;
+            doc.text(`Attendance Sheet - ${date}`, 14, 20); // Increased y-coordinate from 15 to 20
+            doc.autoTable({ 
+                html: '#attendanceTable',
+                startY: 25, // Add starting y-coordinate for the table
+                margin: { top: 25 } // Add top margin
+            });
+            
+            doc.save(`attendance_${date}_export.pdf`);
+        }
+
+        function exportToCSV() {
+            const date = document.getElementById('attendanceDate').value;
+            const entries = attendanceEntries[date] || [];
+            
+            const csvContent = "data:text/csv;charset=utf-8,"
+                + "Name,Date,Time In,Time Out,Hours,Status\n"
+                + entries.map(e => `${e.name},${e.date},${e.timeIn || ''},${e.timeOut || ''},${e.hours ? e.hours.toFixed(2) : ''},${e.timeOut ? 'Completed' : 'In Progress'}`).join("\n");
+            
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `attendance_${date}_export.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+        }
+
+        // Initial render
+        loadEmployees();
+        const now = new Date();
+        const offset = now.getTimezoneOffset();
+        const localDate = new Date(now.getTime() - (offset*60*1000));
+        const currentDate = localDate.toISOString().split('T')[0];
+        document.getElementById('attendanceDate').value = currentDate;
+        loadAttendanceEntries();
+        populateEmployeeDropdown();
+
+        // Example of adding employees in the backend
+        addEmployee("John Doe", "EMP001");
+        addEmployee("Jane Smith", "EMP002");
+        addEmployee("Mike Johnson", "EMP003");
+	addEmployee("Mohsin Khan", "EMP004");
+    </script>
+</body>
+</html>
